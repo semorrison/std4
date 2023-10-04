@@ -18,7 +18,7 @@ namespace Rat
   · rfl
 
 theorem normalize.reduced' {num : Int} {den g : Nat} (den_nz : den ≠ 0)
-    (e : g = num.natAbs.gcd den) : (num / g).natAbs.coprime (den / g) := by
+    (e : g = num.natAbs.gcd den) : (num / g).natAbs.Coprime (den / g) := by
   rw [← Int.div_eq_ediv_of_dvd (e ▸ Int.ofNat_dvd_left.2 (Nat.gcd_dvd_left ..))]
   exact normalize.reduced den_nz e
 
@@ -323,8 +323,10 @@ theorem ofScientific_def : Rat.ofScientific m s e =
 
 @[simp] theorem intCast_num (a : Int) : (a : Rat).num = a := rfl
 
--- The following lemmas are later subsumed by e.g. `Int.cast_add` and `Int.cast_mul` in Mathlib
--- but it is convenient to have these earlier, for users who only need `Int` and `Rat`.
+/-!
+The following lemmas are later subsumed by e.g. `Int.cast_add` and `Int.cast_mul` in Mathlib
+but it is convenient to have these earlier, for users who only need `Int` and `Rat`.
+-/
 
 theorem intCast_zero : ((0 : Int) : Rat) = (0 : Rat) := rfl
 
@@ -344,6 +346,3 @@ theorem intCast_one : ((1 : Int) : Rat) = (1 : Rat) := rfl
 @[simp] theorem intCast_mul (a b : Int) : ((a * b : Int) : Rat) = (a : Rat) * (b : Rat) := by
   rw [mul_def]
   ext <;> simp [normalize_eq]
-
-example (a b : Nat) : ((a + b : Nat) : Rat) = (a : Rat) + (b : Rat) := by simp
-example (a b : Nat) : ((a * b : Nat) : Rat) = (a : Rat) * (b : Rat) := by simp

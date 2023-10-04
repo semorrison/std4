@@ -1416,8 +1416,10 @@ theorem mem_toNat' : ∀ (a : Int) (n : Nat), toNat' a = some n ↔ a = n
   | 0 => rfl
   | _+1 => rfl
 
--- The following lemmas are later subsumed by e.g. `Nat.cast_add` and `Nat.cast_mul` in Mathlib
--- but it is convenient to have these earlier, for users who only need `Nat` and `Int`.
+/-!
+The following lemmas are later subsumed by e.g. `Nat.cast_add` and `Nat.cast_mul` in Mathlib
+but it is convenient to have these earlier, for users who only need `Nat` and `Int`.
+-/
 
 theorem natCast_zero : ((0 : Nat) : Int) = (0 : Int) := rfl
 
@@ -1430,5 +1432,3 @@ theorem natCast_one : ((1 : Nat) : Int) = (1 : Int) := rfl
 
 @[simp] theorem natCast_mul (a b : Nat) : ((a * b : Nat) : Int) = (a : Int) * (b : Int) := by
   simp
-
-end Int
