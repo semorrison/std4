@@ -730,6 +730,8 @@ theorem le_natAbs {a : Int} : a ≤ natAbs a :=
   | .inl h => by rw [eq_natAbs_of_zero_le h]; apply Int.le_refl
   | .inr h => Int.le_trans h (ofNat_zero_le _)
 
+theorem neg_le_natAbs {a : Int} : -a ≤ natAbs a := natAbs_neg a ▸ le_natAbs
+
 theorem negSucc_lt_zero (n : Nat) : -[n+1] < 0 :=
   Int.not_le.1 fun h => let ⟨_, h⟩ := eq_ofNat_of_zero_le h; nomatch h
 

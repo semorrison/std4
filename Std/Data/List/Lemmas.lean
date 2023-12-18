@@ -2335,6 +2335,28 @@ theorem minimum?_eq_some_iff' {xs : List Nat} :
     (min_eq_or := fun _ _ => Nat.min_def .. ▸ by split <;> simp)
     (le_min_iff := fun _ _ _ => Nat.le_min)
 
+theorem minimum?_le [Min α] [LE α] {l : List α}
+    (le_refl : ∀ a : α, a ≤ a)
+    (le_min_iff : ∀ a b c : α, a ≤ min b c ↔ a ≤ b ∧ a ≤ c)
+    (w : l.minimum? = some m) (h : x ∈ l) : m ≤ x := by
+  have := le_minimum?_iff le_min_iff w m
+  simp_all
+
+-- A specialization of `minimum?_le` to `Nat`.
+theorem minimum?_le' {l : List Nat}
+    (w : l.minimum? = some m) (h : x ∈ l) : m ≤ x :=
+  minimum?_le w h
+    (le_refl := Nat.le_refl)
+    (le_min_iff := fun _ _ _ => Nat.le_min)
+
+theorem getD_minimum?_le_of_mem [Min α] [LE α] {l : List α}
+    (le_refl : ∀ a : α, a ≤ a)
+    (le_min_iff : ∀ a b c : α, a ≤ min b c ↔ a ≤ b ∧ a ≤ c) (w : x ∈ l) :
+    l.minimum?.getD y ≤ x := by
+  match h : l.minimum? with
+  | none => simp_all
+  | some m => simpa using minimum?_le le_refl le_min_iff h w
+
 /-! ### maximum? -/
 
 @[simp] theorem maximum?_nil [Max α] : ([] : List α).maximum? = none := rfl
@@ -2382,13 +2404,35 @@ theorem maximum?_eq_some_iff [Max α] [LE α] [anti : Antisymm ((· : α) ≤ ·
       (h₂ _ (maximum?_mem max_eq_or (xs := x::xs) rfl))
       ((maximum?_le_iff max_le_iff (xs := x::xs) rfl _).1 (le_refl _) _ h₁)
 
--- A specialization of `maximum?_eq_some_iff` to Nat.
+-- A specialization of `maximum?_eq_some_iff` to `Nat`.
 theorem maximum?_eq_some_iff' {xs : List Nat} :
     xs.maximum? = some a ↔ (a ∈ xs ∧ ∀ b ∈ xs, b ≤ a) :=
   maximum?_eq_some_iff
     (le_refl := Nat.le_refl)
     (max_eq_or := fun _ _ => Nat.max_def .. ▸ by split <;> simp)
     (max_le_iff := fun _ _ _ => Nat.max_le)
+
+theorem le_maximum? [Max α] [LE α] {l : List α}
+    (le_refl : ∀ a : α, a ≤ a)
+    (max_le_iff : ∀ a b c : α, max b c ≤ a ↔ b ≤ a ∧ c ≤ a)
+    (w : l.maximum? = some m) (h : x ∈ l) : x ≤ m := by
+  have := maximum?_le_iff max_le_iff w m
+  simp_all
+
+-- A specialization of `le_maximum?` to `Nat`.
+theorem le_maximum?' {l : List Nat}
+    (w : l.maximum? = some m) (h : x ∈ l) : x ≤ m :=
+  le_maximum? w h
+    (le_refl := Nat.le_refl)
+    (max_le_iff := fun _ _ _ => Nat.max_le)
+
+theorem le_getD_maximum?_of_mem [Max α] [LE α] {l : List α}
+    (le_refl : ∀ a : α, a ≤ a)
+    (max_le_iff : ∀ a b c : α, max b c ≤ a ↔ b ≤ a ∧ c ≤ a) (w : x ∈ l) :
+    x ≤ l.maximum?.getD y := by
+  match h : l.maximum? with
+  | none => simp_all
+  | some m => simpa using le_maximum? le_refl max_le_iff h w
 
 /-! ### indexOf and indexesOf -/
 

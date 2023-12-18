@@ -76,58 +76,59 @@ theorem shadows_sat'
         exact ⟨h, lowerBounds_nz⟩
       · simp
   · intro (f, c) m
-    simp at m
-    simp
+    simp only [List.mem_filterMap] at m
     obtain ⟨⟨⟨⟨x, s⟩, w⟩, c'⟩, m, h⟩ := m
     split at h <;> rename_i h'
     · split at h <;> rename_i h'' _
-      · simp at h
+      · simp only [Option.some.injEq, Prod.mk.injEq] at h
         obtain ⟨rfl, rfl⟩ := h
         subst h''
-        simp [Constraint.sat', Constraint.sat] at w
+        simp only [Constraint.sat', Constraint.sat, Option.all_some, decide_eq_true_eq] at w
         apply Int.add_le_of_le_sub_right
         rw [Int.sub_self]
         apply Int.sub_nonpos_of_le w.1
       · simp at h
     · split at h <;> rename_i h'' _
-      · simp at h
+      · simp only [Option.some.injEq, Prod.mk.injEq] at h
         obtain ⟨rfl, rfl⟩ := h
         subst h''
-        simp [Constraint.sat', Constraint.sat] at w
+        simp only [Constraint.sat', Constraint.sat, Option.all_some, decide_eq_true_eq] at w
         apply Int.add_le_of_le_sub_right
         rw [Int.sub_self]
         apply Int.sub_nonpos_of_le w.2
       · simp at h
   · intro (f, c) m
-    simp at m
-    simp
+    simp only [List.mem_filterMap] at m
     obtain ⟨⟨⟨⟨x, s⟩, w⟩, c'⟩, m, h⟩ := m
     split at h <;> rename_i h'
     · split at h <;> rename_i h'' _
-      · simp at h
+      · simp only [Option.some.injEq, Prod.mk.injEq] at h
         obtain ⟨rfl, rfl⟩ := h
         subst h''
-        simp [Constraint.sat', Constraint.sat] at w
+        simp only [Constraint.sat', Constraint.sat, Option.all_some, decide_eq_true_eq] at w
         exact Int.le_add_of_nonneg_left (Int.sub_nonneg_of_le w.2)
       · simp at h
     · split at h <;> rename_i h'' _
-      · simp at h
+      · simp only [Option.some.injEq, Prod.mk.injEq] at h
         obtain ⟨rfl, rfl⟩ := h
         subst h''
-        simp [Constraint.sat', Constraint.sat] at w
+        simp only [Constraint.sat', Constraint.sat, Option.all_some, decide_eq_true_eq] at w
         exact Int.le_add_of_nonneg_left (Int.sub_nonneg_of_le w.1)
       · simp at h
   · simp only [List.mem_filterMap, forall_exists_index, and_imp]
     intro (f, c) m
     split
     · split
-      · simp
+      · simp only [Option.some.injEq, Prod.mk.injEq, and_imp]
         rintro mem rfl rfl
-        replace mem := List.mem_map_of_mem (fun x => (x.2.natAbs : Int)) mem
-        sorry -- true but tedious!
+        exact Int.le_trans Int.le_natAbs
+          (List.le_getD_maximum?_of_mem Int.le_refl (fun _ _ _ => Int.max_le)
+            (List.mem_map_of_mem (fun x => (x.2.natAbs : Int)) mem))
       · simp
     · split
-      · simp
+      · simp only [Option.some.injEq, Prod.mk.injEq, and_imp]
         rintro mem rfl rfl
-        sorry -- true but tedious!
+        exact Int.le_trans Int.neg_le_natAbs
+          (List.le_getD_maximum?_of_mem Int.le_refl (fun _ _ _ => Int.max_le)
+            (List.mem_map_of_mem (fun x => (x.2.natAbs : Int)) mem))
       · simp
