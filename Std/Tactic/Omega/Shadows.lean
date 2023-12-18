@@ -1,7 +1,9 @@
 import Std.Logic
 import Std.Tactic.RCases
 import Std.Data.Int.Lemmas
-import Std
+import Std.Data.List.Lemmas
+import Std.Tactic.Replace
+import Std.Tactic.LeftRight
 
 /--
 Given a variable `v : Int`, the largest coefficient `m` of `v` in an upper bound for `v`,
@@ -58,7 +60,7 @@ theorem greyShadows_of (v m : Int)
     (sat : ∀ l, l ∈ lowerBounds → l.1 ≤ l.2 * v) :
       greyShadows' v m lowerBounds → greyShadows v m lowerBounds none := by
   induction lowerBounds with
-  | nil => simp [greyShadows, greyShadows']
+  | nil => simp [greyShadows', greyShadows]
   | cons p lowerBounds ih =>
     rcases p with ⟨f, c⟩
     rw [greyShadows, greyShadows_iff_aux]
@@ -105,7 +107,9 @@ where
 theorem darkShadow_of_cons_right (h : darkShadow v l (q :: u)) : darkShadow v l u := by
   induction l with
   | nil => simp [darkShadow]
-  | cons p l ih => sorry
+  | cons p l ih =>
+    dsimp [darkShadow, darkShadow.go] at *
+    exact ⟨h.1.2, ih h.2⟩
 
 theorem darkShadow_iff (v : Int) (lowerBounds upperBounds : List (Int × Int)) :
     darkShadow v lowerBounds upperBounds ↔
@@ -114,7 +118,7 @@ theorem darkShadow_iff (v : Int) (lowerBounds upperBounds : List (Int × Int)) :
   induction lowerBounds generalizing upperBounds with
   | nil => simp [darkShadow]
   | cons p lowerBounds ih =>
-    simp only [darkShadow, List.mem_cons, ge_iff_le]
+    simp only [darkShadow, List.mem_cons]
     constructor
     · rintro ⟨h₁, h₂⟩ l u l_mem u_mem
       rcases l_mem with rfl | l_mem
