@@ -18,23 +18,7 @@ See `Std.Tactic.Omega` for an overview of the tactic.
 
 open Lean Meta
 
--- PR'd as https://github.com/leanprover/std4/pull/462
-/--
-Given `p : P ∨ Q` (or any inductive type with two one-argument constructors),
-split the goal into two subgoals:
-one containing the hypothesis `h : P` and another containing `h : Q`.
--/
-def _root_.Lean.MVarId.cases₂ (mvarId : MVarId) (p : Expr) (hName : Name := `h) :
-    MetaM ((MVarId × FVarId) × (MVarId × FVarId)) := do
-  let mvarId ← mvarId.assert `hByCases (← inferType p) p
-  let (fvarId, mvarId) ← mvarId.intro1
-  let #[s₁, s₂] ← mvarId.cases fvarId #[{ varNames := [hName] }, { varNames := [hName] }] |
-    throwError "'cases' tactic failed, unexpected number of subgoals"
-  let #[Expr.fvar f₁ ..] ← pure s₁.fields
-    | throwError "'cases' tactic failed, unexpected new hypothesis"
-  let #[Expr.fvar f₂ ..] ← pure s₂.fields
-    | throwError "'cases' tactic failed, unexpected new hypothesis"
-  return ((s₁.mvarId, f₁), (s₂.mvarId, f₂))
+set_option linter.missingDocs false
 
 namespace Std.Tactic.Omega
 
@@ -57,6 +41,7 @@ To avoid duplicates, we maintain a `HashSet` of previously processed facts.
 TODO: we may want to solve equalities as we find them.
 -/
 structure MetaProblem where
+  goal : Lean.MVarId
   /-- An integer linear arithmetic problem. -/
   problem : Problem := {}
   /-- Pending facts which have not been processed yet. -/
@@ -214,12 +199,6 @@ end
 
 namespace MetaProblem
 
-/-- The trivial `MetaProblem`, with no facts to processs and a trivial `Problem`. -/
-def trivial : MetaProblem where
-  problem := {}
-
-instance : Inhabited MetaProblem := ⟨trivial⟩
-
 /--
 Add an integer equality to the `Problem`.
 
@@ -275,6 +254,8 @@ def pushNot (h P : Expr) : Option Expr := do
       (.app (.const ``Classical.propDecidable []) P₂) h)
   | _ => none
 
+instance : Inhabited (OmegaM α) := ⟨do failure⟩
+
 /-- Parse an `Expr` and extract facts. -/
 partial def addFact (p : MetaProblem) (h : Expr) : OmegaM MetaProblem := do
   if ! p.problem.possible then
@@ -321,7 +302,18 @@ partial def addFact (p : MetaProblem) (h : Expr) : OmegaM MetaProblem := do
     | mkAppN (.const ``Subtype [u]) #[α, P] =>
       p.addFact (mkApp3 (.const ``Subtype.property [u]) α P h)
     | mkAppN (.const ``Or _) #[_, _] => return { p with disjunctions := p.disjunctions.insert h }
-    | _ => pure p
+    | mkAppN (.const ``darkShadow []) #[v, l, u] =>
+      -- let v ← reduceAll v
+      -- let l ← reduceAll l
+      -- let u ← reduceAll u
+      IO.println s!"t: {← ppExpr t}"
+      IO.println s!"l: {← ppExpr (← reduceAll l) }"
+      p.addFact (← mkExpectedTypeHint h (mkAppN (.const ``darkShadow []) #[v, l, u]))
+    | _ =>
+      -- IO.println s!"not using hypothesis: {(← ppExpr t)}"
+      pure p
+
+#reduce List.filterMap (fun x => if x % 2 = 0 then some x else none) [1,2,3,4]
 
 /--
 Process all the facts in a `MetaProblem`.
@@ -341,41 +333,92 @@ partial def processFacts (p : MetaProblem) : OmegaM MetaProblem := do
 
 end MetaProblem
 
-/-- Implementation of the `omega` algorithm, and handling disjunctions. -/
-partial def omegaImpl (m : MetaProblem) (g : MVarId) : OmegaM Unit := g.withContext do
-  let m ← m.processFacts
-  guard m.facts.isEmpty
-  let p := m.problem
-  trace[omega] "Extracted linear arithmetic problem:\nAtoms: {← atomsList}\n{p}"
-  let p' ← if p.possible then p.solveEqualities else pure p
-  let p'' ← if p'.possible then p'.elimination else pure p'
-  trace[omega] "After elimination:\nAtoms: {← atomsList}\n{p''}"
-  match p''.possible, p''.proveFalse?, p''.proveFalse?_spec with
-  | true, _, _ =>
-    match m.disjunctions with
-    | [] => throwError "omega did not find a contradiction:\n{p''}"
-    | h :: t =>
-      trace[omega] "Case splitting on {← inferType h}"
-      let (⟨g₁, h₁⟩, ⟨g₂, h₂⟩) ← g.cases₂ h
-      trace[omega] "Adding facts:\n{← g₁.withContext <| inferType (.fvar h₁)}"
-      let m := { m with problem := p', facts := [.fvar h₁], disjunctions := t }
-      savingState do omegaImpl m g₁
-      trace[omega] "Adding facts:\n{← g₂.withContext <| inferType (.fvar h₂)}"
-      let m := { m with problem := p', facts := [.fvar h₂], disjunctions := t }
-      omegaImpl m g₂
-  | false, .some prf, _ =>
-    trace[omega] "Justification:\n{p''.explanation?.get}"
+/--
+Either assign a proof of `False` to the goal,
+or print an error explaining that no contradiction was found.
+-/
+def resolve (p : Problem) (g : MVarId) : OmegaM Unit :=
+  match p.possible, p.proveFalse?, p.proveFalse?_spec with
+  | true, _, _ => do
+    trace[omega] "omega did not find a contradiction:\n{p}"
+    throwError "omega did not find a contradiction:\n{p}"
+  | false, .some prf, _ => do
+    trace[omega] "Justification:\n{p.explanation?.get}"
     let prf ← instantiateMVars (← prf)
     trace[omega] "omega found a contradiction, proving {← inferType prf}"
     trace[omega] "{prf}"
     g.assign prf
+
+mutual
+
+partial def runOmega (m : MetaProblem) : OmegaM Unit := m.goal.withContext do
+  let m ← m.processFacts
+  guard m.facts.isEmpty
+  let p := m.problem
+  let p₁ ← if p.possible then p.solveEqualities else pure p
+  try
+    runOmega' { m with problem := p₁ }
+  catch e =>
+    match m.disjunctions with
+    | h :: t =>
+      trace[omega] "Case splitting on {← inferType h}"
+      let (⟨g₁, h₁⟩, ⟨g₂, h₂⟩) ← m.goal.cases₂ h
+      trace[omega] "Adding facts:\n{← g₁.withContext <| inferType (.fvar h₁)}"
+      let m := { m with goal := g₁, problem := p₁, facts := [.fvar h₁], disjunctions := t }
+      withoutModifyingState do runOmega m
+      trace[omega] "Adding facts:\n{← g₂.withContext <| inferType (.fvar h₂)}"
+      let m := { m with goal := g₂, problem := p₁, facts := [.fvar h₂], disjunctions := t }
+      runOmega m
+    | [] => throw e
+
+partial def runShadows (p : Problem) (g : MVarId) (h : Expr) : OmegaM Unit := g.withContext do
+  trace[omega] "Beginning shadows case split: {← inferType h}"
+  match ← observing? (g.cases₂ h) with
+  | none =>
+    trace[omega] "Case split failed, assuming it's the final branch."
+    runOmega' { goal := g, problem := p, facts := [h] }
+  | some (⟨g₁, h₁⟩, ⟨g₂, h₂⟩) =>
+    trace[omega] "Case split succeeded, new facts:"
+    trace[omega] "· {← g₁.withContext (inferType (.fvar h₁))}"
+    -- IO.eprintln s!"· {← g₁.withContext (ppExpr (← inferType (.fvar h₁)))}"
+    withoutModifyingState do runOmega' { goal := g₁, problem := p, facts := [.fvar h₁] }
+    trace[omega] "· {← g₂.withContext (inferType (.fvar h₂))}"
+    runShadows p g₂ (.fvar h₂)
+
+partial def runOmega' (m : MetaProblem) : OmegaM Unit := m.goal.withContext do
+  let m ← m.processFacts
+  guard m.facts.isEmpty
+  let p := m.problem
+  trace[omega] "Processing linear arithmetic problem:\nAtoms: {← atomsList}\n{p}"
+  let p₁ ← if p.possible then p.solveEqualities else pure p
+  if p₁.isEmpty || !p₁.possible then
+    resolve p₁ m.goal
+  else
+    let (p₂, data?) := p₁.fourierMotzkin
+    if let some data := data? then
+      trace[omega] "After inexact elimination:\nAtoms: {← atomsList}\n{p₂}"
+      -- This is an inexact elimination
+      runOmega' { m with problem := p₂ } <|> do
+        trace[omega] "No contradiction from the real shadow.\n{data}"
+        -- shadows!
+        let h ← p.shadows_sat' data
+        runShadows p₁ m.goal h
+    else
+      trace[omega] "After exact elimination:\nAtoms: {← atomsList}\n{p₂}"
+      -- This is an exact elimination
+      if p₂.isEmpty || !p₂.possible then
+        resolve p₂ m.goal
+      else
+        runOmega' { m with problem := p₂ }
+
+end
 
 /--
 Given a collection of facts, try prove `False` using the omega algorithm,
 and close the goal using that.
 -/
 def omega (facts : List Expr) (g : MVarId) : MetaM Unit := OmegaM.run do
-  omegaImpl { facts } g
+  runOmega { goal := g, facts }
 
 -- `false_or_by_contra` has been PR'd as https://github.com/leanprover/std4/pull/460
 

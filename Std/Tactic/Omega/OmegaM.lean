@@ -82,6 +82,24 @@ def savingState (t : OmegaM α) : OmegaM α := do
   modifyThe Cache fun _ => cache
   pure r
 
+-- I suspect we should backtrack the `Cache` as well??
+-- instance : MonadBacktrack State OmegaM where
+--   saveState := getThe State
+--   restoreState s := modifyThe State fun _ => s
+
+instance : MonadBacktrack (State × Cache) OmegaM where
+  saveState := do pure (← getThe State, ← getThe Cache)
+  restoreState s := do
+    modifyThe State fun _ => s.1
+    modifyThe Cache fun _ => s.2
+
+-- instance : MonadBacktrack (State × Cache × Meta.State) OmegaM where
+--   saveState := do pure (← getThe State, ← getThe Cache, ← getThe Meta.State)
+--   restoreState s := do
+--     modifyThe State fun _ => s.1
+--     modifyThe Cache fun _ => s.2.1
+--     modifyThe Meta.State fun _ => s.2.2
+
 /-- Wrapper around `Expr.nat?` that also allows `Nat.cast`. -/
 def natCast? (n : Expr) : Option Nat :=
   match n.getAppFnArgs with

@@ -6,7 +6,7 @@ example : True := by
   fail_if_success omega
   trivial
 
--- set_option trace.omega true
+
 example (_ : (1 : Int) < (0 : Int)) : False := by omega
 
 example (_ : (0 : Int) < (0 : Int)) : False := by omega
@@ -61,7 +61,11 @@ example {x y : Nat} (_ : x / 2 - y / 3 < 1) (_ : 3 * x ≥ 2 * y + 6) : False :=
 
 example {x y : Nat} (_ : x / 2 - y / 3 < 1) (_ : 3 * x ≥ 2 * y + 4) : False := by omega
 
+set_option trace.omega true
+
 example {x y : Nat} (_ : x / 2 - y / 3 < x % 2) (_ : 3 * x ≥ 2 * y + 4) : False := by omega
+
+#exit
 
 example {x : Int} (h₁ : 5 ≤ x) (h₂ : x ≤ 4) : False := by omega
 

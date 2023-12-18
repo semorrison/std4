@@ -1,134 +1,43 @@
-import Std.Tactic.Omega.Shadows
-import Std.Tactic.Omega.Constraint
-import Std.Tactic.Omega.Core
 
-set_option linter.missingDocs false
+def darkShadow (L U : List (Int × Nat)) : Prop :=
+  ∀ l, l ∈ L → ∀ u, u ∈ U → l.2 * u.1 - u.2 * l.1 ≥ l.2 * u.2 - l.2 - u.2 + 1
 
-namespace Std.Tactic.Omega
+def greyShadowIndices (m : Nat) (cs : List Nat) : List (Nat × Nat) :=
+  cs.enum.bind fun (i, c) => (i, ·) <$> if c ≤ 1 then .nil else List.range ((c * m - c - m)/m + 1)
 
--- Recall that `(f, c)` a lower bound means `f ≤ c * v`
--- and `(f, c)` an upper bound means `c * v ≤ f`.
+def greyShadowComponent_eq (v : Int) (L : List (Int × Nat)) (a : Nat × Nat) : Prop :=
+  match L.get? a.1 with
+  | none => True
+  | some (f, c) => c * v - f = a.2
 
--- Given `⟨x, s, j⟩ : Fact` and `c` the coefficient of `v` in `x`:
--- If `c > 0` then we match `s` against `⟨some r, _⟩`.
--- `j` can provide a proof that `r ≤ dot x atoms`
--- Thus the lower bound is `(f, c)` where `f = r - dot x atoms + c * v ≤ c * v`.
+def greyShadowComponent_gt (v : Int) (m : Nat) (L : List (Int × Nat)) (a : Nat × Nat) (i : Nat) : Prop :=
+  match L.get? i, decide (i < a.1) with
+  | some (f, c), true => c * v - f > (c * m - c - m)/m
+  | _, _ => True
 
--- If on the other hand `c < 0`, then we match `s` against `⟨_, some r⟩`.
--- `j` can provide a proof that `dot x atoms ≤ r`
--- Thus the lower bound is `(f, -c)` where `f = dot x atoms - r + (-c) * v ≤ (-c) * v`/
-def Shadows
-    (v : Int) (atoms : Coeffs)
-    (lowerBounds upperBounds : List ({ p : Coeffs × Constraint // p.2.sat' p.1 atoms } × Int)) : Prop :=
-  let lowerBounds' : List (Int × Int) := lowerBounds.filterMap fun ⟨⟨⟨x, s⟩, _⟩, c⟩ =>
-    if c > 0 then
-      if let ⟨some r, _⟩ := s then
-        -- `r ≤ dot x atoms`, so `r - dot x atoms + c * v ≤ c * v`
-        some (r - Coeffs.dot x atoms + c * v, c)
-      else
-        none
-    else
-      if let ⟨_, some r⟩ := s then
-        -- `dot x atoms ≤ r` so `Coeffs.dot x atoms - r + (-c) * v ≤ (-c) * v`
-        some (Coeffs.dot x atoms - r + (-c) * v, -c)
-      else
-        none
-  let upperBounds' : List (Int × Int) := upperBounds.filterMap fun ⟨⟨⟨x, s⟩, _⟩, c⟩ =>
-    if c > 0 then
-      if let ⟨_, some r⟩ := s then
-        -- `dot x atoms ≤ r`, so `c * v ≤ r - dot x atoms + c * v`
-        some (r - Coeffs.dot x atoms + c * v, c)
-      else
-        none
-    else
-      if let ⟨some r, _⟩ := s then
-        -- `r ≤ dot x atoms`, so `c * v ≤ dot x atoms - r + (-c) * v`
-        some (Coeffs.dot x atoms - r + (-c) * v, -c)
-      else
-        none
-  let m := upperBounds.map (·.2.natAbs) |>.maximum? |>.getD 0
-  (darkShadow v lowerBounds' upperBounds') ∨ (greyShadows v m lowerBounds' none)
+def greyShadowComponent (v : Int) (m : Nat) (L : List (Int × Nat)) (a : Nat × Nat) : Prop :=
+  greyShadowComponent_eq v L a ∧
+  (List.range a.1).foldr (init := True) fun i P => greyShadowComponent_gt v m L a i ∧ P
 
-theorem shadows_sat'
-    (v : Int) (atoms : Coeffs)
-    (lowerBounds upperBounds : List ({ p : Coeffs × Constraint // p.2.sat' p.1 atoms } × Int))
-    (lowerBounds_nz : ∀ p, p ∈ lowerBounds → p.2 ≠ 0)
-    (two_le_m : 2 ≤ (upperBounds.map (·.2.natAbs) |>.maximum? |>.getD 0 : Int)) :
-    Shadows v atoms lowerBounds upperBounds := by
-  apply shadows_sat _ _ two_le_m
-  · simp only [List.mem_filterMap, forall_exists_index, and_imp]
-    intro (f, c) (⟨(x, s), w⟩, c') m
-    dsimp
-    split <;> rename_i h
-    · split
-      · simp only [Option.some.injEq, Prod.mk.injEq, and_imp]
-        rintro - rfl
-        assumption
-      · simp
-    · split
-      · simp only [Option.some.injEq, Prod.mk.injEq, and_imp]
-        rintro - rfl
-        specialize lowerBounds_nz _ m
-        dsimp at *
-        rw [Int.not_lt] at h
-        apply Int.neg_pos_of_neg
-        rw [Int.lt_iff_le_and_ne]
-        exact ⟨h, lowerBounds_nz⟩
-      · simp
-  · intro (f, c) m
-    simp only [List.mem_filterMap] at m
-    obtain ⟨⟨⟨⟨x, s⟩, w⟩, c'⟩, m, h⟩ := m
-    split at h <;> rename_i h'
-    · split at h <;> rename_i h'' _
-      · simp only [Option.some.injEq, Prod.mk.injEq] at h
-        obtain ⟨rfl, rfl⟩ := h
-        subst h''
-        simp only [Constraint.sat', Constraint.sat, Option.all_some, decide_eq_true_eq] at w
-        apply Int.add_le_of_le_sub_right
-        rw [Int.sub_self]
-        apply Int.sub_nonpos_of_le w.1
-      · simp at h
-    · split at h <;> rename_i h'' _
-      · simp only [Option.some.injEq, Prod.mk.injEq] at h
-        obtain ⟨rfl, rfl⟩ := h
-        subst h''
-        simp only [Constraint.sat', Constraint.sat, Option.all_some, decide_eq_true_eq] at w
-        apply Int.add_le_of_le_sub_right
-        rw [Int.sub_self]
-        apply Int.sub_nonpos_of_le w.2
-      · simp at h
-  · intro (f, c) m
-    simp only [List.mem_filterMap] at m
-    obtain ⟨⟨⟨⟨x, s⟩, w⟩, c'⟩, m, h⟩ := m
-    split at h <;> rename_i h'
-    · split at h <;> rename_i h'' _
-      · simp only [Option.some.injEq, Prod.mk.injEq] at h
-        obtain ⟨rfl, rfl⟩ := h
-        subst h''
-        simp only [Constraint.sat', Constraint.sat, Option.all_some, decide_eq_true_eq] at w
-        exact Int.le_add_of_nonneg_left (Int.sub_nonneg_of_le w.2)
-      · simp at h
-    · split at h <;> rename_i h'' _
-      · simp only [Option.some.injEq, Prod.mk.injEq] at h
-        obtain ⟨rfl, rfl⟩ := h
-        subst h''
-        simp only [Constraint.sat', Constraint.sat, Option.all_some, decide_eq_true_eq] at w
-        exact Int.le_add_of_nonneg_left (Int.sub_nonneg_of_le w.1)
-      · simp at h
-  · simp only [List.mem_filterMap, forall_exists_index, and_imp]
-    intro (f, c) m
-    split
-    · split
-      · simp only [Option.some.injEq, Prod.mk.injEq, and_imp]
-        rintro mem rfl rfl
-        exact Int.le_trans Int.le_natAbs
-          (List.le_getD_maximum?_of_mem Int.le_refl (fun _ _ _ => Int.max_le)
-            (List.mem_map_of_mem (fun x => (x.2.natAbs : Int)) mem))
-      · simp
-    · split
-      · simp only [Option.some.injEq, Prod.mk.injEq, and_imp]
-        rintro mem rfl rfl
-        exact Int.le_trans Int.neg_le_natAbs
-          (List.le_getD_maximum?_of_mem Int.le_refl (fun _ _ _ => Int.max_le)
-            (List.mem_map_of_mem (fun x => (x.2.natAbs : Int)) mem))
-      · simp
+def greyShadow (v : Int) (m : Nat) (L : List (Int × Nat)) : Prop :=
+  ∃ a, a ∈ greyShadowIndices m ((·.2) <$> L) ∧ greyShadowComponent v m L a
+
+theorem greyShadowComponent_eq_of_greyShadowComponent (w : greyShadowComponent v m L a) :
+    greyShadowComponent_eq v L a := w.1
+theorem greyShadowComponent_gt_of_greyShadowComponent (w : greyShadowComponent v m L a) (i : Nat) :
+    greyShadowComponent_gt v m L a i :=
+  sorry
+
+theorem shadows (v : Int) (L U : List (Int × Nat))
+    (L_sat : ∀ l, l ∈ L → l.1 ≤ l.2 * v) (U_sat : ∀ u, u ∈ U → u.2 * v ≤ u.1) :
+    darkShadow L U ∨ greyShadow v sorry L :=
+  sorry
+
+def darkShadow_contraints : sorry := sorry
+theorem darkShadow_constraints_sat : sorry := sorry
+
+def greyShadow_eq_constraint : sorry := sorry
+theorem greyShadow_eq_constraint_sat : sorry := sorry
+
+def greyShadow_gt_constraints : sorry := sorry
+theorem greyShadow_gt_constraints_sat : sorry := sorry

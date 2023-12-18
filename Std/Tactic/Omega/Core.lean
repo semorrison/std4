@@ -5,6 +5,7 @@ Authors: Scott Morrison
 -/
 import Std.Tactic.Omega.OmegaM
 import Std.Tactic.Omega.Constraint
+import Std.Tactic.Omega.Shadows
 import Std.Data.HashMap
 
 open Lean (HashSet)
@@ -552,6 +553,8 @@ def addEqualities (p : Problem) (eqs : List (Int × Coeffs × Option Proof)) : P
 
 /-- Representation of the data required to run Fourier-Motzkin elimination on a variable. -/
 structure FourierMotzkinData where
+  /-- Which variable is being eliminated. -/
+  var : Nat
   /-- The "irrelevant" facts which do not involve the target variable. -/
   irrelevant : List Fact := []
   /--
@@ -576,9 +579,13 @@ deriving Inhabited
 
 instance : ToString FourierMotzkinData where
   toString d :=
-    s!"• irrelevant: {d.irrelevant}\n"
-      ++ s!"• lowerBounds: {d.lowerBounds}\n"
-      ++ s!"• upperBounds: {d.upperBounds}"
+    let irrelevant := d.irrelevant.map fun ⟨x, s, _⟩ => s!"{x} ∈ {s}"
+    let lowerBounds := d.lowerBounds.map fun ⟨⟨x, s, _⟩, _⟩ => s!"{x} ∈ {s}"
+    let upperBounds := d.upperBounds.map fun ⟨⟨x, s, _⟩, _⟩ => s!"{x} ∈ {s}"
+    s!"Fourier-Motzkin elimination data for variable {d.var}\n"
+      ++ s!"• irrelevant: {irrelevant}\n"
+      ++ s!"• lowerBounds: {lowerBounds}\n"
+      ++ s!"• upperBounds: {upperBounds}"
 
 /-- Is a Fourier-Motzkin elimination empty (i.e. there are no relevant constraints). -/
 def FourierMotzkinData.isEmpty (d : FourierMotzkinData) : Bool :=
@@ -593,7 +600,8 @@ def FourierMotzkinData.exact (d : FourierMotzkinData) : Bool := d.lowerExact || 
 -- TODO we could short-circuit here, if we find one with `size = 0`.
 def fourierMotzkinData (p : Problem) : Array FourierMotzkinData := Id.run do
   let n := p.numVars
-  let mut data : Array FourierMotzkinData := Array.mkArray p.numVars {}
+  let mut data : Array FourierMotzkinData :=
+    (List.range p.numVars).foldl (fun a i => a.push { var := i}) #[]
   for (_, f@⟨xs, s, _⟩) in p.constraints.toList do -- We could make a forIn instance for HashMap
     for i in [0:n] do
       let x := Coeffs.get xs i
@@ -637,42 +645,184 @@ def fourierMotzkinSelect (data : Array FourierMotzkinData) : FourierMotzkinData 
   return data[bestIdx]!
 
 /--
-Run Fourier-Motzkin elimination on one variable.
+Runs Fourier-Motzkin elimination on one variable.
+
+Returns the resulting problem,
+as well as an `Option FourierMotzkinData`,
+which will be `none` if the elimination is known to be exact
+(in which case there is no need to run the shadows part of the algorithm).
 -/
-def fourierMotzkin (p : Problem) : Problem := Id.run do
+def fourierMotzkin (p : Problem) : Problem × Option FourierMotzkinData := Id.run do
   let data := p.fourierMotzkinData
   -- Now perform the elimination.
-  let ⟨irrelevant, lower, upper, _, _⟩ := fourierMotzkinSelect data
+  let select := fourierMotzkinSelect data
+  let ⟨_, irrelevant, lower, upper, lowerExact, upperExact⟩ := select
   let mut r : Problem := { assumptions := p.assumptions, eliminations := p.eliminations }
   for f in irrelevant do
     r := r.insertConstraint f
   for ⟨f, b⟩ in lower do
     for ⟨g, a⟩ in upper do
       r := r.addConstraint (Fact.combo a f (-b) g).tidy
-  return r
+  return (r, if lowerExact || upperExact then none else some select)
 
-mutual
 
-/--
-Run the `omega` algorithm (for now without dark and grey shadows!) on a problem.
--/
-partial def runOmega (p : Problem) : OmegaM Problem := do
-  trace[omega] "Running omega on:\n{p}"
-  if p.possible then
-    let p' ← p.solveEqualities
-    elimination p'
-  else
-    return p
+-- Recall that `(f, c)` a lower bound means `f ≤ c * v`
+-- and `(f, c)` an upper bound means `c * v ≤ f`.
 
-/-- As for `runOmega`, but assuming the first round of solving equalities has already happened. -/
-partial def elimination (p : Problem) : OmegaM Problem :=
-  if p.possible then
-    if p.isEmpty then
-      return p
-    else do
-      trace[omega] "Running Fourier-Motzkin elimination on:\n{p}"
-      runOmega p.fourierMotzkin
-  else
-    return p
+-- Given `⟨x, s, j⟩ : Fact` and `c` the coefficient of `v` in `x`:
+-- If `c > 0` then we match `s` against `⟨some r, _⟩`.
+-- `j` can provide a proof that `r ≤ dot x atoms`
+-- Thus the lower bound is `(f, c)` where `f = r - dot x atoms + c * v ≤ c * v`.
 
-end
+-- If on the other hand `c < 0`, then we match `s` against `⟨_, some r⟩`.
+-- `j` can provide a proof that `dot x atoms ≤ r`
+-- Thus the lower bound is `(f, -c)` where `f = dot x atoms - r + (-c) * v ≤ (-c) * v`/
+def darkShadow_or_greyShadows
+    (v : Int) (atoms : Coeffs)
+    (lowerBounds upperBounds : List ({ p : Coeffs × Constraint // p.2.sat' p.1 atoms } × Int)) :
+    Prop :=
+  let lowerBounds' : List (Int × Int) := lowerBounds.filterMap fun ⟨⟨⟨x, s⟩, _⟩, c⟩ =>
+    if c > 0 then
+      if let ⟨some r, _⟩ := s then
+        -- `r ≤ dot x atoms`, so `r - dot x atoms + c * v ≤ c * v`
+        some (r - Coeffs.dot x atoms + c * v, c)
+      else
+        none
+    else
+      if let ⟨_, some r⟩ := s then
+        -- `dot x atoms ≤ r` so `Coeffs.dot x atoms - r + (-c) * v ≤ (-c) * v`
+        some (Coeffs.dot x atoms - r + (-c) * v, -c)
+      else
+        none
+  let upperBounds' : List (Int × Int) := upperBounds.filterMap fun ⟨⟨⟨x, s⟩, _⟩, c⟩ =>
+    if c > 0 then
+      if let ⟨_, some r⟩ := s then
+        -- `dot x atoms ≤ r`, so `c * v ≤ r - dot x atoms + c * v`
+        some (r - Coeffs.dot x atoms + c * v, c)
+      else
+        none
+    else
+      if let ⟨some r, _⟩ := s then
+        -- `r ≤ dot x atoms`, so `c * v ≤ dot x atoms - r + (-c) * v`
+        some (Coeffs.dot x atoms - r + (-c) * v, -c)
+      else
+        none
+  let m := upperBounds.map (·.2.natAbs) |>.maximum? |>.getD 0
+  (darkShadow v lowerBounds' upperBounds') ∨ (greyShadows v m lowerBounds' none)
+
+theorem shadows_sat'_aux
+    (v : Int) (atoms : Coeffs)
+    (lowerBounds upperBounds : List ({ p : Coeffs × Constraint // p.2.sat' p.1 atoms } × Int))
+    (lowerBounds_nz : ∀ p, p ∈ lowerBounds → p.2 ≠ 0)
+    (two_le_m : 2 ≤ (upperBounds.map (·.2.natAbs) |>.maximum? |>.getD 0 : Int)) :
+    darkShadow_or_greyShadows v atoms lowerBounds upperBounds := by
+  apply shadows_sat _ _ two_le_m
+  · simp only [List.mem_filterMap, forall_exists_index, and_imp]
+    intro (f, c) (⟨(x, s), w⟩, c') m
+    dsimp
+    split <;> rename_i h
+    · split
+      · simp only [Option.some.injEq, Prod.mk.injEq, and_imp]
+        rintro - rfl
+        assumption
+      · simp
+    · split
+      · simp only [Option.some.injEq, Prod.mk.injEq, and_imp]
+        rintro - rfl
+        specialize lowerBounds_nz _ m
+        dsimp at *
+        rw [Int.not_lt] at h
+        apply Int.neg_pos_of_neg
+        rw [Int.lt_iff_le_and_ne]
+        exact ⟨h, lowerBounds_nz⟩
+      · simp
+  · intro (f, c) m
+    simp only [List.mem_filterMap] at m
+    obtain ⟨⟨⟨⟨x, s⟩, w⟩, c'⟩, m, h⟩ := m
+    split at h <;> rename_i h'
+    · split at h <;> rename_i h'' _
+      · simp only [Option.some.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl⟩ := h
+        subst h''
+        simp only [Constraint.sat', Constraint.sat, Option.all_some, decide_eq_true_eq] at w
+        apply Int.add_le_of_le_sub_right
+        rw [Int.sub_self]
+        apply Int.sub_nonpos_of_le w.1
+      · simp at h
+    · split at h <;> rename_i h'' _
+      · simp only [Option.some.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl⟩ := h
+        subst h''
+        simp only [Constraint.sat', Constraint.sat, Option.all_some, decide_eq_true_eq] at w
+        apply Int.add_le_of_le_sub_right
+        rw [Int.sub_self]
+        apply Int.sub_nonpos_of_le w.2
+      · simp at h
+  · intro (f, c) m
+    simp only [List.mem_filterMap] at m
+    obtain ⟨⟨⟨⟨x, s⟩, w⟩, c'⟩, m, h⟩ := m
+    split at h <;> rename_i h'
+    · split at h <;> rename_i h'' _
+      · simp only [Option.some.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl⟩ := h
+        subst h''
+        simp only [Constraint.sat', Constraint.sat, Option.all_some, decide_eq_true_eq] at w
+        exact Int.le_add_of_nonneg_left (Int.sub_nonneg_of_le w.2)
+      · simp at h
+    · split at h <;> rename_i h'' _
+      · simp only [Option.some.injEq, Prod.mk.injEq] at h
+        obtain ⟨rfl, rfl⟩ := h
+        subst h''
+        simp only [Constraint.sat', Constraint.sat, Option.all_some, decide_eq_true_eq] at w
+        exact Int.le_add_of_nonneg_left (Int.sub_nonneg_of_le w.1)
+      · simp at h
+  · simp only [List.mem_filterMap, forall_exists_index, and_imp]
+    intro (f, c) m
+    split
+    · split
+      · simp only [Option.some.injEq, Prod.mk.injEq, and_imp]
+        rintro mem rfl rfl
+        exact Int.le_trans Int.le_natAbs
+          (List.le_getD_maximum?_of_mem Int.le_refl (fun _ _ _ => Int.max_le)
+            (List.mem_map_of_mem (fun x => (x.2.natAbs : Int)) mem))
+      · simp
+    · split
+      · simp only [Option.some.injEq, Prod.mk.injEq, and_imp]
+        rintro mem rfl rfl
+        exact Int.le_trans Int.neg_le_natAbs
+          (List.le_getD_maximum?_of_mem Int.le_refl (fun _ _ _ => Int.max_le)
+            (List.mem_map_of_mem (fun x => (x.2.natAbs : Int)) mem))
+      · simp
+
+open Lean in
+def shadows_sat' (p : Problem) (data : FourierMotzkinData) : Proof := do
+  let ⟨i, _, lowerBounds, upperBounds, _, _⟩ := data
+  let v := (← atoms).get! i
+  let atoms ← atomsCoeffs
+  -- Extract all the proof terms
+  let lowerBounds : List (Coeffs × Constraint × Expr × Int) ← lowerBounds.mapM fun (f, c) => do
+    pure ⟨f.coeffs, f.constraint, ← f.justification.proof atoms p.assumptions, c⟩
+  -- Assemble each lower bound into an `Expr` of type
+  -- `{ p : Coeffs × Constraint // p.2.sat' p.1 atoms } × Int`
+  let lowerBounds : List Expr ← lowerBounds.mapM fun ⟨x, s, p, c⟩ => do
+    pure (mkApp4 (.const ``Prod.mk [0, 0]) (← mkFreshTypeMVar) (.const ``Int [])
+      (mkApp4 (.const ``Subtype.mk [1]) (← mkFreshTypeMVar) (← mkFreshExprMVar none)
+        (mkApp4 (.const ``Prod.mk [0, 0]) (.const ``Coeffs []) (.const ``Constraint []) (toExpr x) (toExpr s)) p)
+      (toExpr c))
+  let lowerBounds : Expr ← mkListLit (← mkFreshTypeMVar) lowerBounds
+  let upperBounds : List (Coeffs × Constraint × Expr × Int) ← upperBounds.mapM fun (f, c) => do
+    pure ⟨f.coeffs, f.constraint, ← f.justification.proof atoms p.assumptions, c⟩
+  -- Assemble each upper bound into an `Expr` of type
+  -- `{ p : Coeffs × Constraint // p.2.sat' p.1 atoms } × Int`
+  let upperBounds : List Expr ← upperBounds.mapM fun ⟨x, s, p, c⟩ => do
+    pure (mkApp4 (.const ``Prod.mk [0, 0]) (← mkFreshTypeMVar) (.const ``Int [])
+      (mkApp4 (.const ``Subtype.mk [1]) (← mkFreshTypeMVar) (← mkFreshExprMVar none)
+        (mkApp4 (.const ``Prod.mk [0, 0]) (.const ``Coeffs []) (.const ``Constraint []) (toExpr x) (toExpr s)) p)
+      (toExpr c))
+  let upperBounds : Expr ← mkListLit (← mkFreshTypeMVar) upperBounds
+  -- Use `decide` to prove `∀ p, p ∈ lowerBounds → p.2 ≠ 0`
+  let lowerBounds_nz : Expr ← mkSorry (← mkFreshTypeMVar) false
+  -- Use `decide` to prove `2 ≤ (upperBounds.map (·.2.natAbs) |>.maximum? |>.getD 0 : Int)`
+  let two_le_m : Expr ← mkSorry (← mkFreshTypeMVar) false
+  return mkApp6 (.const ``shadows_sat'_aux [])
+    v atoms lowerBounds upperBounds lowerBounds_nz two_le_m
